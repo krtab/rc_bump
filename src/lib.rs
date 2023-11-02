@@ -1,5 +1,6 @@
 use std::{
     alloc::{alloc, dealloc, Layout, LayoutError},
+    cell::Cell,
     marker::PhantomData,
     mem::{align_of, needs_drop, size_of},
     ops::{Deref, DerefMut},
@@ -24,7 +25,7 @@ impl Metadata {
 
 pub struct Slab {
     metadata: NonNull<Metadata>,
-    first_free: NonNull<u8>,
+    first_free: Cell<NonNull<u8>>,
 }
 
 pub struct SlabMember<T> {
@@ -103,12 +104,12 @@ impl Slab {
         }
         Slab {
             metadata,
-            first_free,
+            first_free: first_free.into(),
         }
     }
 
-    pub fn can_fit<T>(&self) -> Option<(*mut T, *mut u8)> {
-        let first_free_offset = self.first_free.as_ptr();
+    fn can_fit<T>(&self) -> Option<(*mut T, *mut u8)> {
+        let first_free_offset = self.first_free.get().as_ptr();
         let align_offset = first_free_offset.align_offset(align_of::<T>());
         let tentative_start = (first_free_offset as usize).checked_add(align_offset)?;
         let tentative_end = tentative_start.checked_add(size_of::<T>())?;
@@ -122,15 +123,15 @@ impl Slab {
         }
     }
 
-    fn try_alloc_inner<T>(&mut self, value: T) -> Result<RawSlabMember<T>, T> {
+    fn try_alloc_inner<T>(&self, value: T) -> Result<RawSlabMember<T>, T> {
         let (start, end) = match self.can_fit::<T>() {
             Some(res) => res,
             None => return Err(value),
         };
         unsafe { start.write(value) };
         unsafe {
-            self.metadata.as_mut().count += 1;
-            self.first_free = NonNull::new_unchecked(end);
+            (*self.metadata.as_ptr()).count += 1;
+            self.first_free.set(NonNull::new_unchecked(end));
         };
         let res = RawSlabMember {
             metadata: self.metadata,
@@ -139,12 +140,12 @@ impl Slab {
         Ok(res)
     }
 
-    pub fn try_alloc<T>(&mut self, value: T) -> Result<SlabMember<T>, T> {
+    pub fn try_alloc<T>(&self, value: T) -> Result<SlabMember<T>, T> {
         let RawSlabMember { metadata, data } = self.try_alloc_inner(value)?;
         Ok(SlabMember { metadata, data })
     }
 
-    pub fn try_alloc_rc<T>(&mut self, value: T) -> Result<RcSlabMember<T>, T> {
+    pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcSlabMember<T>, T> {
         if needs_drop::<T>() {
             let RawSlabMember { metadata, data } = self
                 .try_alloc_inner(SlabRcEntry { count: 1, value })
@@ -347,7 +348,7 @@ mod test {
             let mut slab_member1;
             let slab_member2;
             {
-                let mut slab = Slab::new(2 * size_of::<u64>(), align_of::<u64>());
+                let slab = Slab::new(2 * size_of::<u64>(), align_of::<u64>());
                 slab_member1 = slab.try_alloc(123_u64).unwrap();
                 slab_member2 = slab.try_alloc(456_u64).unwrap();
             }

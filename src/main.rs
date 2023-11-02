@@ -26,11 +26,11 @@ fn main() {
             nodes.insert(i, node);
         }
     }
-    for (k,node) in nodes {
+    for (k, node) in nodes {
         print!("{k}: ");
         for n in &node.neighbors {
             print!("{} ", n.tag)
-        };
+        }
         println!();
     }
 }
