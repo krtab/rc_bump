@@ -1,6 +1,6 @@
 use std::{
     alloc::{alloc, dealloc, Layout, LayoutError},
-    cell::Cell,
+    cell::{Cell, UnsafeCell},
     marker::PhantomData,
     mem::{align_of, needs_drop, size_of},
     ops::{Deref, DerefMut},
@@ -260,7 +260,7 @@ impl<T> Clone for RcSlabMember<T> {
 pub struct Paving {
     capacity: usize,
     align: usize,
-    current_slab: Slab,
+    current_slab: UnsafeCell<Slab>,
 }
 
 impl Paving {
@@ -269,36 +269,40 @@ impl Paving {
         Self {
             capacity,
             align,
-            current_slab: first_slab,
+            current_slab: first_slab.into(),
         }
     }
 
-    pub fn try_alloc<T>(&mut self, value: T) -> Result<SlabMember<T>, T> {
+    pub fn try_alloc<T>(&self, value: T) -> Result<SlabMember<T>, T> {
         if size_of::<T>() * 2 > self.capacity {
             return Err(value);
         }
-        match self.current_slab.try_alloc(value) {
-            Ok(sm) => Ok(sm),
-            Err(value) => {
-                self.current_slab = Slab::new(self.capacity, self.align);
-                let res = self.current_slab.try_alloc(value);
-                debug_assert!(res.is_ok());
-                res
+        unsafe {
+            match (*self.current_slab.get()).try_alloc(value) {
+                Ok(sm) => Ok(sm),
+                Err(value) => {
+                    *self.current_slab.get() = Slab::new(self.capacity, self.align);
+                    let res = (*self.current_slab.get()).try_alloc(value);
+                    debug_assert!(res.is_ok());
+                    res
+                }
             }
         }
     }
 
-    pub fn try_alloc_rc<T>(&mut self, value: T) -> Result<RcSlabMember<T>, T> {
+    pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcSlabMember<T>, T> {
         if size_of::<T>() * 2 > self.capacity {
             return Err(value);
         }
-        match self.current_slab.try_alloc_rc(value) {
-            Ok(sm) => Ok(sm),
-            Err(value) => {
-                self.current_slab = Slab::new(self.capacity, self.align);
-                let res = self.current_slab.try_alloc_rc(value);
-                debug_assert!(res.is_ok());
-                res
+        unsafe {
+            match (*self.current_slab.get()).try_alloc_rc(value) {
+                Ok(sm) => Ok(sm),
+                Err(value) => {
+                    *self.current_slab.get() = Slab::new(self.capacity, self.align);
+                    let res = (*self.current_slab.get()).try_alloc_rc(value);
+                    debug_assert!(res.is_ok());
+                    res
+                }
             }
         }
     }
@@ -321,14 +325,14 @@ impl BoxingPaving {
         Self(Paving::new(capacity, align))
     }
 
-    pub fn alloc<T>(&mut self, value: T) -> BoxingPavingMember<T> {
+    pub fn alloc<T>(&self, value: T) -> BoxingPavingMember<T> {
         match self.0.try_alloc(value) {
             Ok(sm) => BoxingPavingMember::SlabMember(sm),
             Err(val) => BoxingPavingMember::Box(Box::new(val)),
         }
     }
 
-    pub fn alloc_rc<T>(&mut self, value: T) -> RcBoxingPavingMember<T> {
+    pub fn alloc_rc<T>(&self, value: T) -> RcBoxingPavingMember<T> {
         match self.0.try_alloc_rc(value) {
             Ok(sm) => RcBoxingPavingMember::RcSlabMember(sm),
             Err(val) => RcBoxingPavingMember::Rc(Rc::new(val)),
@@ -365,7 +369,7 @@ mod test {
             let slab_member1;
             let slab_member2;
             {
-                let mut slab = Paving::new(2 * size_of::<u64>(), align_of::<u64>());
+                let slab = Paving::new(2 * size_of::<u64>(), align_of::<u64>());
                 slab_member1 = slab.try_alloc(123_u64).unwrap();
                 slab.try_alloc(0_u64).unwrap();
                 slab.try_alloc(0_u64).unwrap();

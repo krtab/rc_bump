@@ -10,7 +10,7 @@ struct GraphNode {
 fn main() {
     let mut nodes = HashMap::new();
     {
-        let mut paving = Paving::new(100 * 32, align_of::<u64>());
+        let paving = Paving::new(100 * 32, align_of::<u64>());
         for i in 1_u64..10_000 {
             let children = nodes
                 .iter()
