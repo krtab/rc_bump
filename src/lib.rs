@@ -30,21 +30,21 @@ impl Metadata {
 }
 
 /// A zone of memory to allocate into.
-pub struct Slab {
+pub struct Bump {
     metadata: NonNull<Metadata>,
     first_free: Cell<NonNull<u8>>,
 }
 
-/// A pointer to a [`Slab`] owning the underlying object,
+/// A pointer to a [`Bump`] owning the underlying object,
 /// like a Box.
 /// 
 /// The obejct will be dropped when the pointer is dropped.
-pub struct SlabMember<T> {
+pub struct BumpMember<T> {
     metadata: NonNull<Metadata>,
     data: NonNull<T>,
 }
 
-impl<T> Deref for SlabMember<T> {
+impl<T> Deref for BumpMember<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -52,19 +52,19 @@ impl<T> Deref for SlabMember<T> {
     }
 }
 
-impl<T> DerefMut for SlabMember<T> {
+impl<T> DerefMut for BumpMember<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.data.as_mut() }
     }
 }
 
-struct SlabRcEntry<T> {
+struct BumpRcEntry<T> {
     count: usize,
     value: T,
 }
 
 enum NeedsDrop<T> {
-    Yes(NonNull<SlabRcEntry<T>>),
+    Yes(NonNull<BumpRcEntry<T>>),
     No(NonNull<T>),
 }
 
@@ -78,45 +78,45 @@ impl<T> NeedsDrop<T> {
     }
 }
 
-/// A pointer to a [`Slab`] offering shared ownership of
+/// A pointer to a [`Bump`] offering shared ownership of
 /// the pointed object, similar to [`std::rc::Rc`].
 /// 
 /// The object is dropped once all pointers are dropped.
 /// 
 /// If `!T::needs_drop()`, most of the dropping code for
 /// the `T` itself is optimized away.
-pub struct RcSlabMember<T> {
+pub struct RcBumpMember<T> {
     metadata: NonNull<Metadata>,
     rc_data: NonNull<u8>,
     _marker: PhantomData<T>,
 }
 
-impl<T> RcSlabMember<T> {
+impl<T> RcBumpMember<T> {
     fn rc_data(&self) -> NeedsDrop<T> {
         NeedsDrop::from_rc_data(self.rc_data)
     }
 }
 
-fn inner_slab_layout(capacity: usize, align: usize) -> Result<(Layout, usize), LayoutError> {
+fn inner_bump_layout(capacity: usize, align: usize) -> Result<(Layout, usize), LayoutError> {
     Layout::from_size_align(capacity, align)?.extend(Layout::new::<Metadata>())
 }
 
-struct RawSlabMember<T> {
+struct RawBumpMember<T> {
     metadata: NonNull<Metadata>,
     data: NonNull<T>,
 }
 
-impl Slab {
-    /// Create a new Slab.
+impl Bump {
+    /// Create a new Bump.
     /// 
     /// # Arguments
     /// 
-    /// capacity: the capacity in bytes of the slab
+    /// capacity: the capacity in bytes of the bump
     /// 
     /// alignment: an indicative alignment for the
-    /// first object of the slab
+    /// first object of the bump
     pub fn new(capacity: usize, align: usize) -> Self {
-        let (layout, metadata_offset) = inner_slab_layout(capacity, align).unwrap();
+        let (layout, metadata_offset) = inner_bump_layout(capacity, align).unwrap();
         let inner_ptr = unsafe { alloc(layout) };
         let metadata =
             unsafe { NonNull::new_unchecked(inner_ptr.add(metadata_offset).cast::<Metadata>()) };
@@ -128,7 +128,7 @@ impl Slab {
                 layout,
             })
         }
-        Slab {
+        Bump {
             metadata,
             first_free: first_free.into(),
         }
@@ -149,7 +149,7 @@ impl Slab {
         }
     }
 
-    fn try_alloc_inner<T>(&self, value: T) -> Result<RawSlabMember<T>, T> {
+    fn try_alloc_inner<T>(&self, value: T) -> Result<RawBumpMember<T>, T> {
         let (start, end) = match self.can_fit::<T>() {
             Some(res) => res,
             None => return Err(value),
@@ -159,37 +159,37 @@ impl Slab {
             (*self.metadata.as_ptr()).count += 1;
             self.first_free.set(NonNull::new_unchecked(end));
         };
-        let res = RawSlabMember {
+        let res = RawBumpMember {
             metadata: self.metadata,
             data: unsafe { NonNull::new_unchecked(start) },
         };
         Ok(res)
     }
 
-    /// Try to allocate an object in the slab
+    /// Try to allocate an object in the bump
     /// 
     /// Fails if there is not enough memory left
-    pub fn try_alloc<T>(&self, value: T) -> Result<SlabMember<T>, T> {
-        let RawSlabMember { metadata, data } = self.try_alloc_inner(value)?;
-        Ok(SlabMember { metadata, data })
+    pub fn try_alloc<T>(&self, value: T) -> Result<BumpMember<T>, T> {
+        let RawBumpMember { metadata, data } = self.try_alloc_inner(value)?;
+        Ok(BumpMember { metadata, data })
     }
 
-    /// Try to allocate a object with shared ownership in the slab.
+    /// Try to allocate a object with shared ownership in the bump.
     /// 
     /// Fails if there is not enough memory left
-    pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcSlabMember<T>, T> {
+    pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcBumpMember<T>, T> {
         if needs_drop::<T>() {
-            let RawSlabMember { metadata, data } = self
-                .try_alloc_inner(SlabRcEntry { count: 1, value })
+            let RawBumpMember { metadata, data } = self
+                .try_alloc_inner(BumpRcEntry { count: 1, value })
                 .map_err(|srce| srce.value)?;
-            Ok(RcSlabMember {
+            Ok(RcBumpMember {
                 metadata,
                 rc_data: data.cast(),
                 _marker: PhantomData,
             })
         } else {
-            let RawSlabMember { metadata, data } = self.try_alloc_inner(value)?;
-            Ok(RcSlabMember {
+            let RawBumpMember { metadata, data } = self.try_alloc_inner(value)?;
+            Ok(RcBumpMember {
                 metadata,
                 rc_data: data.cast(),
                 _marker: PhantomData,
@@ -198,13 +198,13 @@ impl Slab {
     }
 }
 
-impl Drop for Slab {
+impl Drop for Bump {
     fn drop(&mut self) {
         unsafe { Metadata::decrement_and_drop(self.metadata) };
     }
 }
 
-impl<T> Drop for SlabMember<T> {
+impl<T> Drop for BumpMember<T> {
     fn drop(&mut self) {
         unsafe {
             drop_in_place(self.data.as_mut());
@@ -215,12 +215,12 @@ impl<T> Drop for SlabMember<T> {
 
 
 #[allow(unused)]
-struct RcMdSlabMember<T> {
+struct RcMdBumpMember<T> {
     metadata: NonNull<Metadata>,
     data: NonNull<T>,
 }
 
-impl<T> Deref for RcMdSlabMember<T> {
+impl<T> Deref for RcMdBumpMember<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -228,7 +228,7 @@ impl<T> Deref for RcMdSlabMember<T> {
     }
 }
 
-impl<T> Drop for RcMdSlabMember<T> {
+impl<T> Drop for RcMdBumpMember<T> {
     fn drop(&mut self) {
         unsafe {
             Metadata::decrement_and_drop(self.metadata);
@@ -236,17 +236,17 @@ impl<T> Drop for RcMdSlabMember<T> {
     }
 }
 
-impl<T> SlabMember<T> {
+impl<T> BumpMember<T> {
     #[allow(unused)]
-    fn into_rcmd(self) -> RcMdSlabMember<T> {
-        RcMdSlabMember {
+    fn into_rcmd(self) -> RcMdBumpMember<T> {
+        RcMdBumpMember {
             metadata: self.metadata,
             data: self.data,
         }
     }
 }
 
-impl<T> Deref for RcSlabMember<T> {
+impl<T> Deref for RcBumpMember<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -259,7 +259,7 @@ impl<T> Deref for RcSlabMember<T> {
     }
 }
 
-impl<T> Drop for RcSlabMember<T> {
+impl<T> Drop for RcBumpMember<T> {
     fn drop(&mut self) {
         unsafe {
             match self.rc_data() {
@@ -276,7 +276,7 @@ impl<T> Drop for RcSlabMember<T> {
     }
 }
 
-impl<T> Clone for RcSlabMember<T> {
+impl<T> Clone for RcBumpMember<T> {
     fn clone(&self) -> Self {
         unsafe {
             match self.rc_data() {
@@ -292,41 +292,41 @@ impl<T> Clone for RcSlabMember<T> {
     }
 }
 
-/// A structure generating slabs as appropriated
+/// A structure generating bumps as appropriated
 pub struct Paving {
     capacity: usize,
     align: usize,
-    current_slab: UnsafeCell<Slab>,
+    current_bump: UnsafeCell<Bump>,
 }
 
 impl Paving {
-    /// Creates a new paving, which will be backed by slabs
+    /// Creates a new paving, which will be backed by bumps
     /// created with correponding capacity and align.
     /// 
-    /// See [`Slab::new`]
+    /// See [`Bump::new`]
     pub fn new(capacity: usize, align: usize) -> Self {
-        let first_slab = Slab::new(capacity, align);
+        let first_bump = Bump::new(capacity, align);
         Self {
             capacity,
             align,
-            current_slab: first_slab.into(),
+            current_bump: first_bump.into(),
         }
     }
 
     /// Try to allocate an object in the paving
     /// 
-    /// Fails if no slab big enough can be created to accomodate
+    /// Fails if no bump big enough can be created to accomodate
     /// the object
-    pub fn try_alloc<T>(&self, value: T) -> Result<SlabMember<T>, T> {
+    pub fn try_alloc<T>(&self, value: T) -> Result<BumpMember<T>, T> {
         if size_of::<T>() * 2 > self.capacity {
             return Err(value);
         }
         unsafe {
-            match (*self.current_slab.get()).try_alloc(value) {
+            match (*self.current_bump.get()).try_alloc(value) {
                 Ok(sm) => Ok(sm),
                 Err(value) => {
-                    *self.current_slab.get() = Slab::new(self.capacity, self.align);
-                    let res = (*self.current_slab.get()).try_alloc(value);
+                    *self.current_bump.get() = Bump::new(self.capacity, self.align);
+                    let res = (*self.current_bump.get()).try_alloc(value);
                     debug_assert!(res.is_ok());
                     res
                 }
@@ -334,20 +334,20 @@ impl Paving {
         }
     }
 
-    /// Try to allocate a object with shared ownership in the slab.
+    /// Try to allocate a object with shared ownership in the bump.
     /// 
-    /// Fails if no slab big enough can be created to accomodate
+    /// Fails if no bump big enough can be created to accomodate
     /// the object
-    pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcSlabMember<T>, T> {
+    pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcBumpMember<T>, T> {
         if size_of::<T>() * 2 > self.capacity {
             return Err(value);
         }
         unsafe {
-            match (*self.current_slab.get()).try_alloc_rc(value) {
+            match (*self.current_bump.get()).try_alloc_rc(value) {
                 Ok(sm) => Ok(sm),
                 Err(value) => {
-                    *self.current_slab.get() = Slab::new(self.capacity, self.align);
-                    let res = (*self.current_slab.get()).try_alloc_rc(value);
+                    *self.current_bump.get() = Bump::new(self.capacity, self.align);
+                    let res = (*self.current_bump.get()).try_alloc_rc(value);
                     debug_assert!(res.is_ok());
                     res
                 }
@@ -358,8 +358,8 @@ impl Paving {
 
 /// A pointer to a mixed paving owning its pointee
 pub enum OwnedMixedPavingMember<T> {
-    /// The object was allocated in a slab
-    SlabMember(SlabMember<T>),
+    /// The object was allocated in a bump
+    BumpMember(BumpMember<T>),
     /// The object is allocated on its own
     Box(Box<T>),
 }
@@ -367,7 +367,7 @@ pub enum OwnedMixedPavingMember<T> {
 impl<T> DerefMut for OwnedMixedPavingMember<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            OwnedMixedPavingMember::SlabMember(sm) => sm,
+            OwnedMixedPavingMember::BumpMember(sm) => sm,
             OwnedMixedPavingMember::Box(b) => b,
         }
     }
@@ -378,7 +378,7 @@ impl<T> Deref for OwnedMixedPavingMember<T> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            OwnedMixedPavingMember::SlabMember(sm) => sm,
+            OwnedMixedPavingMember::BumpMember(sm) => sm,
             OwnedMixedPavingMember::Box(b) => b,
         }
     }
@@ -386,8 +386,8 @@ impl<T> Deref for OwnedMixedPavingMember<T> {
 
 /// A pointer to a mixed paving sharing ownership of its pointee
 pub enum SharedMixedPavingMember<T> {
-    /// The object was allocated in a slab
-    RcSlabMember(RcSlabMember<T>),
+    /// The object was allocated in a bump
+    RcBumpMember(RcBumpMember<T>),
     /// The object is allocated on its own
     Rc(Rc<T>),
 }
@@ -397,20 +397,20 @@ impl<T> Deref for SharedMixedPavingMember<T> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            SharedMixedPavingMember::RcSlabMember(sm) => sm,
+            SharedMixedPavingMember::RcBumpMember(sm) => sm,
             SharedMixedPavingMember::Rc(rc) => rc,
         }
     }
 }
 
-/// A paving which will allocate objects too large out of any slab
+/// A paving which will allocate objects too large out of any bump
 pub struct MixedPaving(Paving);
 
 impl MixedPaving {
-    /// Creates a new mixed paving whose backing slabs will have the corresponding
+    /// Creates a new mixed paving whose backing bumps will have the corresponding
     /// capacity and align.
     /// 
-    /// See [`Slab::new`]
+    /// See [`Bump::new`]
     pub fn new(capacity: usize, align: usize) -> Self {
         Self(Paving::new(capacity, align))
     }
@@ -418,7 +418,7 @@ impl MixedPaving {
     /// Alloc an object returning an owning pointer
     pub fn alloc<T>(&self, value: T) -> OwnedMixedPavingMember<T> {
         match self.0.try_alloc(value) {
-            Ok(sm) => OwnedMixedPavingMember::SlabMember(sm),
+            Ok(sm) => OwnedMixedPavingMember::BumpMember(sm),
             Err(val) => OwnedMixedPavingMember::Box(Box::new(val)),
         }
     }
@@ -426,7 +426,7 @@ impl MixedPaving {
     /// Alloc an object return an shareable pointer
     pub fn alloc_rc<T>(&self, value: T) -> SharedMixedPavingMember<T> {
         match self.0.try_alloc_rc(value) {
-            Ok(sm) => SharedMixedPavingMember::RcSlabMember(sm),
+            Ok(sm) => SharedMixedPavingMember::RcBumpMember(sm),
             Err(val) => SharedMixedPavingMember::Rc(Rc::new(val)),
         }
     }
@@ -436,39 +436,39 @@ impl MixedPaving {
 mod test {
     use std::mem::{align_of, size_of};
 
-    use crate::{Paving, Slab};
+    use crate::{Paving, Bump};
 
     #[test]
-    fn test_creation_slab() {
+    fn test_creation_bump() {
         {
-            let mut slab_member1;
-            let slab_member2;
+            let mut bump_member1;
+            let bump_member2;
             {
-                let slab = Slab::new(2 * size_of::<u64>(), align_of::<u64>());
-                slab_member1 = slab.try_alloc(123_u64).unwrap();
-                slab_member2 = slab.try_alloc(456_u64).unwrap();
+                let bump = Bump::new(2 * size_of::<u64>(), align_of::<u64>());
+                bump_member1 = bump.try_alloc(123_u64).unwrap();
+                bump_member2 = bump.try_alloc(456_u64).unwrap();
             }
-            assert_eq!(*slab_member2, 456);
-            assert_eq!(*slab_member1, 123);
-            *slab_member1 += 1;
-            assert_eq!(*slab_member1, 124);
+            assert_eq!(*bump_member2, 456);
+            assert_eq!(*bump_member1, 123);
+            *bump_member1 += 1;
+            assert_eq!(*bump_member1, 124);
         }
     }
 
     #[test]
     fn test_creation_paving() {
         {
-            let slab_member1;
-            let slab_member2;
+            let bump_member1;
+            let bump_member2;
             {
-                let slab = Paving::new(2 * size_of::<u64>(), align_of::<u64>());
-                slab_member1 = slab.try_alloc(123_u64).unwrap();
-                slab.try_alloc(0_u64).unwrap();
-                slab.try_alloc(0_u64).unwrap();
-                slab_member2 = slab.try_alloc(456_u64).unwrap();
+                let bump = Paving::new(2 * size_of::<u64>(), align_of::<u64>());
+                bump_member1 = bump.try_alloc(123_u64).unwrap();
+                bump.try_alloc(0_u64).unwrap();
+                bump.try_alloc(0_u64).unwrap();
+                bump_member2 = bump.try_alloc(456_u64).unwrap();
             }
-            assert_eq!(*slab_member1, 123);
-            assert_eq!(*slab_member2, 456);
+            assert_eq!(*bump_member1, 123);
+            assert_eq!(*bump_member2, 456);
         }
     }
 }

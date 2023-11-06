@@ -7,16 +7,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'rc_slab'",
+            "name": "Debug unit tests in library 'rc_bump'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=rc_slab"
+                    "--package=rc_bump"
                 ],
                 "filter": {
-                    "name": "rc_slab",
+                    "name": "rc_bump",
                     "kind": "lib"
                 }
             },
@@ -26,15 +26,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'rc_slab'",
+            "name": "Debug executable 'rc_bump'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=rc_slab",
-                    "--package=rc_slab"
+                    "--bin=rc_bump",
+                    "--package=rc_bump"
                 ],
                 "filter": {
-                    "name": "rc_slab",
+                    "name": "rc_bump",
                     "kind": "bin"
                 }
             },
@@ -44,16 +44,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'rc_slab'",
+            "name": "Debug unit tests in executable 'rc_bump'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=rc_slab",
-                    "--package=rc_slab"
+                    "--bin=rc_bump",
+                    "--package=rc_bump"
                 ],
                 "filter": {
-                    "name": "rc_slab",
+                    "name": "rc_bump",
                     "kind": "bin"
                 }
             },

@@ -1,10 +1,10 @@
 use std::{collections::HashMap, mem::align_of};
 
-use rc_slab::{Paving, RcSlabMember};
+use rc_bump::{Paving, RcBumpMember};
 
 struct GraphNode {
     tag: u64,
-    neighbors: Vec<RcSlabMember<GraphNode>>,
+    neighbors: Vec<RcBumpMember<GraphNode>>,
 }
 
 fn main() {

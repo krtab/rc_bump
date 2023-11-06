@@ -4,15 +4,15 @@ use std::{mem::align_of, mem::size_of, rc::Rc, time::Duration};
 
 use bumpalo::Bump;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use rc_slab::{Paving, RcSlabMember};
+use rc_bump::{Paving, RcBumpMember};
 
 struct GraphNodePaving {
     tag: u32,
-    neighbors: Vec<RcSlabMember<GraphNodePaving>>,
+    neighbors: Vec<RcBumpMember<GraphNodePaving>>,
 }
 
 fn generate_graph_paving(n: u32) {
-    let mut nodes: Vec<RcSlabMember<GraphNodePaving>> = Vec::new();
+    let mut nodes: Vec<RcBumpMember<GraphNodePaving>> = Vec::new();
     {
         let paving = Paving::new(100 * size_of::<GraphNodePaving>(), align_of::<u64>());
         for i in 1_u32..n {
