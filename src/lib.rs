@@ -1,3 +1,9 @@
+#![warn(missing_docs)]
+
+//! This crate offers fast and locality-aware allocation
+//! similar to bumpalo but without using lifetimes, relying
+//! instead on reference counting.
+
 use std::{
     alloc::{alloc, dealloc, Layout, LayoutError},
     cell::{Cell, UnsafeCell},
@@ -23,11 +29,16 @@ impl Metadata {
     }
 }
 
+/// A zone of memory to allocate into.
 pub struct Slab {
     metadata: NonNull<Metadata>,
     first_free: Cell<NonNull<u8>>,
 }
 
+/// A pointer to a [`Slab`] owning the underlying object,
+/// like a Box.
+/// 
+/// The obejct will be dropped when the pointer is dropped.
 pub struct SlabMember<T> {
     metadata: NonNull<Metadata>,
     data: NonNull<T>,
@@ -67,6 +78,13 @@ impl<T> NeedsDrop<T> {
     }
 }
 
+/// A pointer to a [`Slab`] offering shared ownership of
+/// the pointed object, similar to [`std::rc::Rc`].
+/// 
+/// The object is dropped once all pointers are dropped.
+/// 
+/// If `!T::needs_drop()`, most of the dropping code for
+/// the `T` itself is optimized away.
 pub struct RcSlabMember<T> {
     metadata: NonNull<Metadata>,
     rc_data: NonNull<u8>,
@@ -89,6 +107,14 @@ struct RawSlabMember<T> {
 }
 
 impl Slab {
+    /// Create a new Slab.
+    /// 
+    /// # Arguments
+    /// 
+    /// capacity: the capacity in bytes of the slab
+    /// 
+    /// alignment: an indicative alignment for the
+    /// first object of the slab
     pub fn new(capacity: usize, align: usize) -> Self {
         let (layout, metadata_offset) = inner_slab_layout(capacity, align).unwrap();
         let inner_ptr = unsafe { alloc(layout) };
@@ -140,11 +166,17 @@ impl Slab {
         Ok(res)
     }
 
+    /// Try to allocate an object in the slab
+    /// 
+    /// Fails if there is not enough memory left
     pub fn try_alloc<T>(&self, value: T) -> Result<SlabMember<T>, T> {
         let RawSlabMember { metadata, data } = self.try_alloc_inner(value)?;
         Ok(SlabMember { metadata, data })
     }
 
+    /// Try to allocate a object with shared ownership in the slab.
+    /// 
+    /// Fails if there is not enough memory left
     pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcSlabMember<T>, T> {
         if needs_drop::<T>() {
             let RawSlabMember { metadata, data } = self
@@ -181,7 +213,9 @@ impl<T> Drop for SlabMember<T> {
     }
 }
 
-pub struct RcMdSlabMember<T> {
+
+#[allow(unused)]
+struct RcMdSlabMember<T> {
     metadata: NonNull<Metadata>,
     data: NonNull<T>,
 }
@@ -203,7 +237,8 @@ impl<T> Drop for RcMdSlabMember<T> {
 }
 
 impl<T> SlabMember<T> {
-    pub fn into_rcmd(self) -> RcMdSlabMember<T> {
+    #[allow(unused)]
+    fn into_rcmd(self) -> RcMdSlabMember<T> {
         RcMdSlabMember {
             metadata: self.metadata,
             data: self.data,
@@ -257,6 +292,7 @@ impl<T> Clone for RcSlabMember<T> {
     }
 }
 
+/// A structure generating slabs as appropriated
 pub struct Paving {
     capacity: usize,
     align: usize,
@@ -264,6 +300,10 @@ pub struct Paving {
 }
 
 impl Paving {
+    /// Creates a new paving, which will be backed by slabs
+    /// created with correponding capacity and align.
+    /// 
+    /// See [`Slab::new`]
     pub fn new(capacity: usize, align: usize) -> Self {
         let first_slab = Slab::new(capacity, align);
         Self {
@@ -273,6 +313,10 @@ impl Paving {
         }
     }
 
+    /// Try to allocate an object in the paving
+    /// 
+    /// Fails if no slab big enough can be created to accomodate
+    /// the object
     pub fn try_alloc<T>(&self, value: T) -> Result<SlabMember<T>, T> {
         if size_of::<T>() * 2 > self.capacity {
             return Err(value);
@@ -290,6 +334,10 @@ impl Paving {
         }
     }
 
+    /// Try to allocate a object with shared ownership in the slab.
+    /// 
+    /// Fails if no slab big enough can be created to accomodate
+    /// the object
     pub fn try_alloc_rc<T>(&self, value: T) -> Result<RcSlabMember<T>, T> {
         if size_of::<T>() * 2 > self.capacity {
             return Err(value);
@@ -308,34 +356,78 @@ impl Paving {
     }
 }
 
-pub enum BoxingPavingMember<T> {
+/// A pointer to a mixed paving owning its pointee
+pub enum OwnedMixedPavingMember<T> {
+    /// The object was allocated in a slab
     SlabMember(SlabMember<T>),
+    /// The object is allocated on its own
     Box(Box<T>),
 }
 
-pub enum RcBoxingPavingMember<T> {
+impl<T> DerefMut for OwnedMixedPavingMember<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            OwnedMixedPavingMember::SlabMember(sm) => sm,
+            OwnedMixedPavingMember::Box(b) => b,
+        }
+    }
+}
+
+impl<T> Deref for OwnedMixedPavingMember<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            OwnedMixedPavingMember::SlabMember(sm) => sm,
+            OwnedMixedPavingMember::Box(b) => b,
+        }
+    }
+}
+
+/// A pointer to a mixed paving sharing ownership of its pointee
+pub enum SharedMixedPavingMember<T> {
+    /// The object was allocated in a slab
     RcSlabMember(RcSlabMember<T>),
+    /// The object is allocated on its own
     Rc(Rc<T>),
 }
 
-pub struct BoxingPaving(Paving);
+impl<T> Deref for SharedMixedPavingMember<T> {
+    type Target = T;
 
-impl BoxingPaving {
+    fn deref(&self) -> &Self::Target {
+        match self {
+            SharedMixedPavingMember::RcSlabMember(sm) => sm,
+            SharedMixedPavingMember::Rc(rc) => rc,
+        }
+    }
+}
+
+/// A paving which will allocate objects too large out of any slab
+pub struct MixedPaving(Paving);
+
+impl MixedPaving {
+    /// Creates a new mixed paving whose backing slabs will have the corresponding
+    /// capacity and align.
+    /// 
+    /// See [`Slab::new`]
     pub fn new(capacity: usize, align: usize) -> Self {
         Self(Paving::new(capacity, align))
     }
 
-    pub fn alloc<T>(&self, value: T) -> BoxingPavingMember<T> {
+    /// Alloc an object returning an owning pointer
+    pub fn alloc<T>(&self, value: T) -> OwnedMixedPavingMember<T> {
         match self.0.try_alloc(value) {
-            Ok(sm) => BoxingPavingMember::SlabMember(sm),
-            Err(val) => BoxingPavingMember::Box(Box::new(val)),
+            Ok(sm) => OwnedMixedPavingMember::SlabMember(sm),
+            Err(val) => OwnedMixedPavingMember::Box(Box::new(val)),
         }
     }
 
-    pub fn alloc_rc<T>(&self, value: T) -> RcBoxingPavingMember<T> {
+    /// Alloc an object return an shareable pointer
+    pub fn alloc_rc<T>(&self, value: T) -> SharedMixedPavingMember<T> {
         match self.0.try_alloc_rc(value) {
-            Ok(sm) => RcBoxingPavingMember::RcSlabMember(sm),
-            Err(val) => RcBoxingPavingMember::Rc(Rc::new(val)),
+            Ok(sm) => SharedMixedPavingMember::RcSlabMember(sm),
+            Err(val) => SharedMixedPavingMember::Rc(Rc::new(val)),
         }
     }
 }
