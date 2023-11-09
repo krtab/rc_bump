@@ -1,8 +1,17 @@
-#![feature(allocator_api)]
-
 use std::{mem::align_of, mem::size_of, rc::Rc, time::Duration};
 
-use bumpalo::Bump;
+
+static DIVISORS : [(u32,[u32;64]) ; 10001] = 
+    include!("divisors.txt")
+;
+
+
+fn get_divisors(n: u32) -> &'static [u32] {
+    let (n_div, divs) = &DIVISORS[n as usize];
+    &divs[..(*n_div as usize)]
+}
+
+use bumpalo::{collections::Vec as BumpVec, Bump};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rc_bump::{Paving, RcBumpMember};
 
@@ -14,11 +23,11 @@ struct GraphNodePaving {
 fn generate_graph_paving(n: u32) {
     let mut nodes: Vec<RcBumpMember<GraphNodePaving>> = Vec::new();
     {
-        let paving = Paving::new(100 * size_of::<GraphNodePaving>(), align_of::<u64>());
+        let paving = Paving::new(100 * size_of::<GraphNodePaving>(), align_of::<GraphNodePaving>());
         for i in 1_u32..n {
-            let children = nodes
+            let children = get_divisors(i)
                 .iter()
-                .filter(|node| i % node.tag == 0)
+                .filter(|&&k|  i != k).map(|k| &nodes[*k as usize  - 1])
                 .cloned()
                 .collect();
             let node = GraphNodePaving {
@@ -45,9 +54,9 @@ fn generate_graph_rc(n: u32) {
     let mut nodes: Vec<Rc<GraphNodeRc>> = Vec::new();
     {
         for i in 1_u32..n {
-            let children = nodes
+            let children = get_divisors(i)
                 .iter()
-                .filter(|node| i % node.tag == 0)
+                .filter(|&&k|  i != k).map(|k| &nodes[*k as usize  - 1])
                 .cloned()
                 .collect();
             let node = GraphNodeRc {
@@ -67,35 +76,37 @@ fn generate_graph_rc(n: u32) {
 
 struct GraphNodeBumpalo<'a> {
     tag: u32,
-    neighbors: Vec<Rc<GraphNodeBumpalo<'a>,&'a Bump>>,
+    neighbors: BumpVec<'a, &'a GraphNodeBumpalo<'a>>,
 }
 
 fn generate_graph_bumpalo(n: u32) {
     let bump = Bump::new();
-    let mut nodes: Vec<Rc<GraphNodeBumpalo,&Bump>> = Vec::new();
+    let mut nodes: Vec<&GraphNodeBumpalo> = Vec::new();
     {
         for i in 1_u32..n {
-            let children = nodes
+            let children = BumpVec::from_iter_in(
+                get_divisors(i)
                 .iter()
-                .filter(|node| i % node.tag == 0)
-                .cloned()
-                .collect();
+                .filter(|&&k|  i != k).map(|k| &nodes[*k as usize  - 1])
+                .cloned(),
+                &bump,
+            );
             let node = GraphNodeBumpalo {
                 tag: i,
                 neighbors: children,
             };
-            let node = Rc::new_in(node, &bump);
+            let node = bump.alloc(node);
             nodes.push(node);
         }
     }
     let mut head = nodes.pop().unwrap();
     std::mem::drop(nodes);
     while let Some(new_head) = head.neighbors.last() {
-        head = new_head.clone()
+        head = new_head
     }
 }
 
-const BENCH_PARAMS: [u32; 6] = [10, 100, 64 * 3, 64*5, 64 * 3 * 5,64*3*5*7];
+const BENCH_PARAMS: [u32; 7] = [10, 100, 64 * 3, 64 * 5, 64 * 3 * 5, 64 * 3 * 5 * 7,10_000];
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("divisor_graph");
     group.warm_up_time(Duration::from_millis(1000));

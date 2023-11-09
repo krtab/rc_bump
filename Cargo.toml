@@ -1,7 +1,15 @@
 [package]
 name = "rc_bump"
 version = "0.1.0"
+authors = ["Arthur Carcano <arthur.carcano@ocamlpro.com>"]
+description = """An arena for heterogeneous types and without lifetimes"""
+categories = ["encoding", "no-std", "no-std::no-alloc"]
+keywords = ["serde", "serialization", "no_std", "iter", "streaming"]
+repository = "https://github.com/krtab/serde_deser_iter"
+readme = "Readme.md"
 edition = "2021"
+resolver = "2"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,5 +21,5 @@ harness = false
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
-bumpalo = {version = "3.14", features = ["allocator_api"] }
+bumpalo = {version = "3.14", features = ["collections"] }
 
