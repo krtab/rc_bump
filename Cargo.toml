@@ -1,10 +1,10 @@
 [package]
 name = "rc_bump"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Arthur Carcano <arthur.carcano@ocamlpro.com>"]
 description = """An arena for heterogeneous types and without lifetimes"""
 categories = ["memory-management", "rust-patterns", "no-std"]
-keywords = ["serde", "serialization", "no_std", "iter", "streaming"]
+keywords = ["arena", "memory", "bump", "allocator"]
 repository = "https://github.com/krtab/rc_bump"
 readme = "Readme.md"
 edition = "2021"
