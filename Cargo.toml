@@ -1,11 +1,11 @@
 [package]
 name = "rc_bump"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Arthur Carcano <arthur.carcano@ocamlpro.com>"]
 description = """An arena for heterogeneous types and without lifetimes"""
-categories = ["encoding", "no-std", "no-std::no-alloc"]
+categories = ["memory-management", "rust-patterns", "no-std"]
 keywords = ["serde", "serialization", "no_std", "iter", "streaming"]
-repository = "https://github.com/krtab/serde_deser_iter"
+repository = "https://github.com/krtab/rc_bump"
 readme = "Readme.md"
 edition = "2021"
 resolver = "2"
