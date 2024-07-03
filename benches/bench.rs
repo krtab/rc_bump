@@ -1,10 +1,6 @@
 use std::{mem::align_of, mem::size_of, rc::Rc, time::Duration};
 
-
-static DIVISORS : [(u32,[u32;64]) ; 10001] = 
-    include!("divisors.txt")
-;
-
+static DIVISORS: [(u32, [u32; 64]); 10001] = include!("divisors.txt");
 
 fn get_divisors(n: u32) -> &'static [u32] {
     let (n_div, divs) = &DIVISORS[n as usize];
@@ -23,11 +19,15 @@ struct GraphNodePaving {
 fn generate_graph_paving(n: u32) {
     let mut nodes: Vec<RcBumpMember<GraphNodePaving>> = Vec::new();
     {
-        let paving = Paving::new(100 * size_of::<GraphNodePaving>(), align_of::<GraphNodePaving>());
+        let paving = Paving::new(
+            100 * size_of::<GraphNodePaving>(),
+            align_of::<GraphNodePaving>(),
+        );
         for i in 1_u32..n {
             let children = get_divisors(i)
                 .iter()
-                .filter(|&&k|  i != k).map(|k| &nodes[*k as usize  - 1])
+                .filter(|&&k| i != k)
+                .map(|k| &nodes[*k as usize - 1])
                 .cloned()
                 .collect();
             let node = GraphNodePaving {
@@ -56,7 +56,8 @@ fn generate_graph_rc(n: u32) {
         for i in 1_u32..n {
             let children = get_divisors(i)
                 .iter()
-                .filter(|&&k|  i != k).map(|k| &nodes[*k as usize  - 1])
+                .filter(|&&k| i != k)
+                .map(|k| &nodes[*k as usize - 1])
                 .cloned()
                 .collect();
             let node = GraphNodeRc {
@@ -86,9 +87,10 @@ fn generate_graph_bumpalo(n: u32) {
         for i in 1_u32..n {
             let children = BumpVec::from_iter_in(
                 get_divisors(i)
-                .iter()
-                .filter(|&&k|  i != k).map(|k| &nodes[*k as usize  - 1])
-                .cloned(),
+                    .iter()
+                    .filter(|&&k| i != k)
+                    .map(|k| &nodes[*k as usize - 1])
+                    .cloned(),
                 &bump,
             );
             let node = GraphNodeBumpalo {
@@ -106,7 +108,7 @@ fn generate_graph_bumpalo(n: u32) {
     }
 }
 
-const BENCH_PARAMS: [u32; 7] = [10, 100, 64 * 3, 64 * 5, 64 * 3 * 5, 64 * 3 * 5 * 7,10_000];
+const BENCH_PARAMS: [u32; 7] = [10, 100, 64 * 3, 64 * 5, 64 * 3 * 5, 64 * 3 * 5 * 7, 10_000];
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("divisor_graph");
     group.warm_up_time(Duration::from_millis(1000));
